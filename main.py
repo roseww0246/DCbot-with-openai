@@ -147,6 +147,6 @@ async def on_ready():
 # -------------- 主程式 --------------
 if __name__ == "__main__":
     try:
-        bot.run(DISCORD_TOKEN)
+        bot.run(DISCORD_BOT_TOKEN)
     except KeyboardInterrupt:
         print("🛑 手動停止 Bot")
