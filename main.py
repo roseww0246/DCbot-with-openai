@@ -115,6 +115,26 @@ async def scheduler():
 
 # -------------- Discord 指令 --------------
 from discord import app_commands
+import discord
+
+intents = discord.Intents.default()
+intents.message_content = True
+
+# 全域列表
+post_times = ["08:00", "12:00", "18:00", "22:00"]
+themes = ["cute animals", "meme"]
+
+class MyBot(discord.Client):
+    def __init__(self):
+        super().__init__(intents=intents)
+        self.tree = app_commands.CommandTree(self)
+
+    async def setup_hook(self):
+        await self.tree.sync()
+
+client = MyBot()
+
+# ---------- Slash Commands ----------
 
 @client.tree.command(name="addtime", description="新增發文時段")
 @app_commands.describe(time_str="時段，例如 14:00")
@@ -123,39 +143,49 @@ async def addtime(interaction: discord.Interaction, time_str: str):
     post_times.append(time_str)
     await interaction.response.send_message(f"✅ 新增發文時段: {time_str}")
 
-
-@bot.command()
-async def removetime(ctx, time_str):
+@client.tree.command(name="removetime", description="刪除發文時段")
+@app_commands.describe(time_str="時段，例如 14:00")
+async def removetime(interaction: discord.Interaction, time_str: str):
+    global post_times
     if time_str in post_times:
         post_times.remove(time_str)
-        await ctx.send(f"✅ 刪除發文時段: {time_str}")
+        await interaction.response.send_message(f"✅ 刪除發文時段: {time_str}")
     else:
-        await ctx.send("⚠️ 時段不存在")
+        await interaction.response.send_message(f"⚠️ 時段不存在: {time_str}")
 
-@bot.command()
-async def time_schedule(ctx):
-    await ctx.send(f"📅 現有發文時段: {post_times}")
+@client.tree.command(name="time_schedule", description="查看現有發文時段")
+async def time_schedule(interaction: discord.Interaction):
+    await interaction.response.send_message(f"📅 現有發文時段: {post_times}")
 
-@bot.command()
-async def addtheme(ctx, *, theme):
+@client.tree.command(name="addtheme", description="新增發文主題")
+@app_commands.describe(theme="主題文字，例如 cute animals")
+async def addtheme(interaction: discord.Interaction, theme: str):
+    global themes
     themes.append(theme)
-    await ctx.send(f"✅ 新增主題: {theme}")
+    await interaction.response.send_message(f"✅ 新增主題: {theme}")
 
-@bot.command()
-async def removetheme(ctx, *, theme):
+@client.tree.command(name="removetheme", description="刪除發文主題")
+@app_commands.describe(theme="主題文字，例如 cute animals")
+async def removetheme(interaction: discord.Interaction, theme: str):
+    global themes
     if theme in themes:
         themes.remove(theme)
-        await ctx.send(f"✅ 刪除主題: {theme}")
+        await interaction.response.send_message(f"✅ 刪除主題: {theme}")
     else:
-        await ctx.send("⚠️ 主題不存在")
+        await interaction.response.send_message(f"⚠️ 主題不存在: {theme}")
 
-@bot.command()
-async def theme_schedule(ctx):
-    await ctx.send(f"📌 現有主題: {themes}")
+@client.tree.command(name="theme_schedule", description="查看現有主題")
+async def theme_schedule(interaction: discord.Interaction):
+    await interaction.response.send_message(f"📌 現有主題: {themes}")
 
-@bot.command()
-async def report(ctx):
-    await generate_and_post()
+@client.tree.command(name="report", description="立即生成報告")
+async def report(interaction: discord.Interaction):
+    # 這裡可以呼叫你的 generate_and_post() 函數
+    await interaction.response.send_message("📊 報告已生成（示範）")
+
+# 啟動 Bot
+client.run("你的DISCORD_TOKEN")
+
 
 # -------------- 啟動 --------------
 @bot.event
