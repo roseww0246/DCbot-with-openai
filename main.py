@@ -1,190 +1,199 @@
 import os
 import asyncio
-import discord
-from discord.ext import commands, tasks
-import openai
-import tweepy
 import logging
 from datetime import datetime
+from discord.ext import commands, tasks
+import discord
+import tweepy
+import openai
+from fastapi import FastAPI
+import uvicorn
 import pytz
 
-# ----------------------------
-# 設定日誌
-# ----------------------------
 logging.basicConfig(level=logging.INFO)
 
-# ----------------------------
-# 環境變數
-# ----------------------------
+# ---------- 環境變數 ----------
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-TWITTER_API_KEY = os.getenv("TWITTER_API_KEY")
-TWITTER_API_SECRET = os.getenv("TWITTER_API_SECRET")
-TWITTER_ACCESS_TOKEN = os.getenv("TWITTER_ACCESS_TOKEN")
-TWITTER_ACCESS_TOKEN_SECRET = os.getenv("TWITTER_ACCESS_TOKEN_SECRET")
+X_API_KEY = os.getenv("X_API_KEY")  # Twitter API Key
+X_API_SECRET = os.getenv("X_API_SECRET")  # Twitter API Secret
+X_ACCESS_TOKEN = os.getenv("X_ACCESS_TOKEN")
+X_ACCESS_SECRET = os.getenv("X_ACCESS_SECRET")
 
-if not all([DISCORD_TOKEN, OPENAI_API_KEY, TWITTER_API_KEY, TWITTER_API_SECRET, TWITTER_ACCESS_TOKEN, TWITTER_ACCESS_TOKEN_SECRET]):
-    logging.error("❌ 請確認所有環境變數已設定")
-    exit(1)
+TIMEZONE = pytz.timezone("Asia/Taipei")
 
-# ----------------------------
-# 初始化 OpenAI
-# ----------------------------
+# ---------- OpenAI 初始化 ----------
 openai.api_key = OPENAI_API_KEY
 
-# ----------------------------
-# 初始化 Twitter
-# ----------------------------
-auth = tweepy.OAuth1UserHandler(
-    TWITTER_API_KEY, TWITTER_API_SECRET,
-    TWITTER_ACCESS_TOKEN, TWITTER_ACCESS_TOKEN_SECRET
-)
-twitter_api = tweepy.API(auth)
+# ---------- Twitter 初始化 ----------
+twitter_client = None
+if all([X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_SECRET]):
+    auth = tweepy.OAuth1UserHandler(
+        X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_SECRET
+    )
+    twitter_client = tweepy.API(auth)
+    try:
+        twitter_client.verify_credentials()
+        logging.info("✅ X API 登入成功")
+    except Exception as e:
+        logging.error(f"❌ X API 登入失敗: {e}")
 
-# ----------------------------
-# 初始化 Discord
-# ----------------------------
+# ---------- Discord Bot 初始化 ----------
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="/", intents=intents)
 
-# ----------------------------
-# 全域資料
-# ----------------------------
-timezone = pytz.timezone("Asia/Taipei")
-scheduled_times = ["08:00", "12:00", "18:00", "22:00"]
-themes = ["科技", "藝術", "生活"]
+# ---------- 時段與主題管理 ----------
+time_slots = []  # e.g., ["08:00", "12:00", "18:00", "22:00"]
+themes = []      # e.g., ["AI", "Nature", "Funny"]
 
 paused = False
 
-# ----------------------------
-# Discord 指令
-# ----------------------------
-@bot.command()
-async def addtime(ctx, time_str: str):
-    if time_str not in scheduled_times:
-        scheduled_times.append(time_str)
-        await ctx.send(f"✅ 已新增時段: {time_str}")
-    else:
-        await ctx.send(f"⚠️ 時段 {time_str} 已存在")
+# ---------- Discord 指令 ----------
+@bot.event
+async def on_ready():
+    logging.info(f"✅ 已登入 Discord: {bot.user}")
+    if not scheduler.is_running():
+        scheduler.start()
 
-@bot.command()
-async def removetime(ctx, time_str: str):
-    if time_str in scheduled_times:
-        scheduled_times.remove(time_str)
+@bot.command(name="addtime", help="增加排程時間")
+async def add_time(ctx, time_str: str):
+    if time_str not in time_slots:
+        time_slots.append(time_str)
+        await ctx.send(f"✅ 已增加時段: {time_str}")
+    else:
+        await ctx.send("⚠️ 時段已存在")
+
+@bot.command(name="removetime", help="刪除排程時間")
+async def remove_time(ctx, time_str: str):
+    if time_str in time_slots:
+        time_slots.remove(time_str)
         await ctx.send(f"✅ 已刪除時段: {time_str}")
     else:
-        await ctx.send(f"⚠️ 時段 {time_str} 不存在")
+        await ctx.send("⚠️ 時段不存在")
 
-@bot.command()
+@bot.command(name="time_schedule", help="查看現有時段")
 async def time_schedule(ctx):
-    await ctx.send(f"🕒 現有時段: {', '.join(sorted(scheduled_times))}")
+    if time_slots:
+        await ctx.send(f"🕒 現有時段: {', '.join(time_slots)}")
+    else:
+        await ctx.send("⚠️ 尚未設定時段")
 
-@bot.command()
-async def addtheme(ctx, theme: str):
+@bot.command(name="addtheme", help="增加主題")
+async def add_theme(ctx, *, theme: str):
     if theme not in themes:
         themes.append(theme)
-        await ctx.send(f"✅ 已新增主題: {theme}")
+        await ctx.send(f"✅ 已增加主題: {theme}")
     else:
-        await ctx.send(f"⚠️ 主題 {theme} 已存在")
+        await ctx.send("⚠️ 主題已存在")
 
-@bot.command()
-async def removetheme(ctx, theme: str):
+@bot.command(name="removetheme", help="刪除主題")
+async def remove_theme(ctx, *, theme: str):
     if theme in themes:
         themes.remove(theme)
         await ctx.send(f"✅ 已刪除主題: {theme}")
     else:
-        await ctx.send(f"⚠️ 主題 {theme} 不存在")
+        await ctx.send("⚠️ 主題不存在")
 
-@bot.command()
+@bot.command(name="theme_schedule", help="查看現有主題")
 async def theme_schedule(ctx):
-    await ctx.send(f"📚 現有主題: {', '.join(themes)}")
+    if themes:
+        await ctx.send(f"📚 現有主題: {', '.join(themes)}")
+    else:
+        await ctx.send("⚠️ 尚未設定主題")
 
-@bot.command()
+@bot.command(name="debug", help="系統偵錯")
 async def debug(ctx):
-    msg = (
-        f"🧪 系統偵錯\n"
-        f"━━━━━━━━━━━━━━\n"
-        f"🕒 時區：{timezone}\n"
-        f"⏰ 排程時間：{', '.join(sorted(scheduled_times))}\n"
-        f"📚 主題數：{len(themes)}\n"
-        f"⏸️ 暫停：{paused}\n"
-    )
-    await ctx.send(msg)
+    status = f"""
+🧪 系統偵錯
+━━━━━━━━━━━━━━
+🕒 時區：{TIMEZONE.zone}
+⏰ 排程時間：{', '.join(time_slots) if time_slots else '未設定'}
+📚 主題數：{len(themes)}
+⏸️ 暫停：{paused}
 
-@bot.command()
+🐦 X API
+登入：{'✅' if twitter_client else '❌'}
+"""
+    await ctx.send(status)
+
+@bot.command(name="pause", help="暫停自動發文")
 async def pause(ctx):
     global paused
     paused = True
     await ctx.send("⏸️ 已暫停自動發文")
 
-@bot.command()
+@bot.command(name="resume", help="恢復自動發文")
 async def resume(ctx):
     global paused
     paused = False
     await ctx.send("▶️ 已恢復自動發文")
 
-# ----------------------------
-# 自動推文任務
-# ----------------------------
-async def generate_image(prompt: str) -> bytes:
-    """使用 OpenAI 生成圖片"""
+# ---------- 發文與生成圖片 ----------
+async def generate_image(prompt):
     try:
-        response = openai.Image.create(
+        result = openai.Image.create(
             prompt=prompt,
             n=1,
             size="1024x1024"
         )
-        img_url = response['data'][0]['url']
-        import requests
-        r = requests.get(img_url)
-        return r.content
+        return result['data'][0]['url']
     except Exception as e:
         logging.error(f"❌ 生成圖片失敗: {e}")
         return None
 
-async def post_to_twitter(text: str, image_bytes: bytes = None):
-    try:
-        if image_bytes:
-            from io import BytesIO
-            file = BytesIO(image_bytes)
-            file.name = "image.png"
-            media = twitter_api.media_upload(filename="image.png", file=file)
-            twitter_api.update_status(status=text, media_ids=[media.media_id])
-        else:
-            twitter_api.update_status(status=text)
-        logging.info("🐦 已發文到 Twitter")
-    except Exception as e:
-        logging.error(f"❌ 發文到 Twitter 失敗: {e}")
-
-@tasks.loop(seconds=60)
-async def scheduled_loop():
-    global paused
-    if paused:
+async def post_to_twitter(prompt):
+    if not twitter_client:
+        logging.warning("❌ Twitter 尚未登入")
         return
-    now = datetime.now(timezone)
-    time_str = now.strftime("%H:%M")
-    if time_str in scheduled_times:
-        theme = themes[now.minute % len(themes)]
-        prompt = f"以 '{theme}' 為主題生成圖片"
-        img_bytes = await generate_image(prompt)
-        tweet_text = f"{theme} 主題自動推文 - {now.strftime('%Y-%m-%d %H:%M')}"
-        await post_to_twitter(tweet_text, img_bytes)
-        logging.info(f"🟢 發布完成: {tweet_text}")
+    image_url = await generate_image(prompt)
+    if image_url:
+        # 下載圖片再上傳
+        import requests
+        from io import BytesIO
+        resp = requests.get(image_url)
+        img_data = BytesIO(resp.content)
+        try:
+            twitter_client.update_status_with_media(status=prompt, filename="image.png", file=img_data)
+            logging.info("✅ 成功發文至 X")
+        except Exception as e:
+            logging.error(f"❌ 發文失敗: {e}")
+    else:
+        logging.warning("⚠️ 沒有生成圖片，跳過發文")
 
-# ----------------------------
-# Bot 啟動事件
-# ----------------------------
-@bot.event
-async def on_ready():
-    logging.info(f"✅ 已登入 Discord: {bot.user}")
-    scheduled_loop.start()
+# ---------- 排程 ----------
+scheduler = tasks.Loop(seconds=60)
+@scheduler.before_loop
+async def before_loop():
+    await bot.wait_until_ready()
+    logging.info("🫀 Bot 活動中...")
 
-# ----------------------------
-# 永遠運行保持 Railway 友善
-# ----------------------------
+@scheduler.loop
+async def scheduled_task():
+    global paused
+    if paused or not time_slots or not themes:
+        return
+    now = datetime.now(TIMEZONE)
+    current_time = now.strftime("%H:%M")
+    if current_time in time_slots:
+        prompt = f"自動推文主題: {themes[now.minute % len(themes)]}"
+        await post_to_twitter(prompt)
+
+# ---------- FastAPI 保活 ----------
+app = FastAPI()
+
+@app.get("/ping")
+async def ping():
+    return {"status": "alive"}
+
+# ---------- 主程式 ----------
 async def main():
-    await bot.start(DISCORD_TOKEN)
+    bot_task = asyncio.create_task(bot.start(DISCORD_TOKEN))
+    # FastAPI server 保活
+    server_task = asyncio.create_task(
+        uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)), log_level="info")
+    )
+    await asyncio.gather(bot_task, server_task)
 
 if __name__ == "__main__":
     try:
