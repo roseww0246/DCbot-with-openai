@@ -1,5 +1,6 @@
 import os
 import discord
+from discord import app_commands
 from discord.ext import commands
 from fastapi import FastAPI
 import uvicorn
@@ -18,16 +19,28 @@ if not DISCORD_TOKEN or not OPENAI_API_KEY:
 openai.api_key = OPENAI_API_KEY
 
 intents = discord.Intents.default()
-intents.message_content = True  # 確保可以讀取訊息內容
+intents.message_content = True
 
 bot = commands.Bot(command_prefix="/", intents=intents)
 app = FastAPI()
 logging.basicConfig(level=logging.INFO)
 
 # ----------------- Discord 指令 -----------------
-@bot.slash_command(name="make_picture", description="生成圖片並回傳到頻道")
-async def make_picture(ctx: discord.ApplicationContext, prompt: str):
-    await ctx.respond("🖌️ 開始生成圖片，請稍候...")
+class MyClient(discord.Client):
+    def __init__(self, *, intents: discord.Intents):
+        super().__init__(intents=intents)
+        self.tree = app_commands.CommandTree(self)
+
+client = MyClient(intents=intents)
+
+@client.event
+async def on_ready():
+    await client.tree.sync()
+    logging.info(f"✅ 已登入 Discord: {client.user}")
+
+@client.tree.command(name="make_picture", description="生成圖片並回傳到頻道")
+async def make_picture(interaction: discord.Interaction, prompt: str):
+    await interaction.response.send_message("🖌️ 開始生成圖片，請稍候...")
     try:
         response = openai.Image.create(
             prompt=prompt,
@@ -35,9 +48,9 @@ async def make_picture(ctx: discord.ApplicationContext, prompt: str):
             size="512x512"
         )
         image_url = response['data'][0]['url']
-        await ctx.send(f"✅ 圖片生成完成：{image_url}")
+        await interaction.followup.send(f"✅ 圖片生成完成：{image_url}")
     except openai.error.OpenAIError as e:
-        await ctx.send(f"❌ 生成圖片時出錯：{e}")
+        await interaction.followup.send(f"❌ 生成圖片時出錯：{e}")
 
 # ----------------- FastAPI 保活 -----------------
 @app.get("/ping")
@@ -46,7 +59,7 @@ async def ping():
 
 # ----------------- 啟動函數 -----------------
 async def start_bot():
-    await bot.start(DISCORD_TOKEN)
+    await client.start(DISCORD_TOKEN)
 
 async def main():
     # 建立 Discord Bot 任務
@@ -56,7 +69,6 @@ async def main():
     server = uvicorn.Server(config)
     server_task = asyncio.create_task(server.serve())
 
-    # 等待兩個任務結束（實際上會常駐）
     await asyncio.gather(bot_task, server_task)
 
 if __name__ == "__main__":
