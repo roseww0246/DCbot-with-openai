@@ -165,15 +165,21 @@ async def ping():
     return {"status": "alive"}
 
 # ---------- 主程式 ----------
-async def main():
+async def start_bot_and_server():
+    # 啟動 FastAPI 保活
+    config = uvicorn.Config(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)), log_level="info")
+    server = uvicorn.Server(config)
+
+    # 兩個任務一起跑
     bot_task = asyncio.create_task(bot.start(DISCORD_TOKEN))
-    server_task = asyncio.create_task(
-        uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)), log_level="info")
-    )
-    await asyncio.gather(bot_task, server_task)
+    api_task = asyncio.create_task(server.serve())
+
+    # 保持永遠運行
+    await asyncio.gather(bot_task, api_task)
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        asyncio.run(start_bot_and_server())
     except KeyboardInterrupt:
         logging.info("🛑 手動停止 Bot")
+
