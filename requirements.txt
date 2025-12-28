@@ -6,3 +6,6 @@ schedule
 requests
 pytz
 aiohttp
+fastapi
+uvicorn
+nest-asyncio
